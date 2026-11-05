@@ -28,6 +28,10 @@ def mizan_provision(context, company, abbr, language):
 			frappe.db.rollback()
 			click.secho(f"mizan-provision failed on {site}: {strip_html(str(e))}", fg="red", err=True)
 			sys.exit(1)
+		except Exception:
+			frappe.db.rollback()
+			click.secho(f"mizan-provision failed on {site}; nothing was changed.", fg="red", err=True)
+			raise
 		frappe.db.commit()
 		click.echo(f"Provisioned {site}: company {company!r}, language {language}.")
 	finally:

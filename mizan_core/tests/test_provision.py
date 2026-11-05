@@ -68,6 +68,7 @@ class TestProvision(IntegrationTestCase):
 		self.assertTrue(frappe.db.get_single_value("System Settings", "setup_complete"))
 		# The desk opens the setup wizard while this default still points at it.
 		self.assertNotEqual(frappe.db.get_default("desktop:home_page"), "setup-wizard")
+		self.assertEqual(frappe.db.get_single_value("System Settings", "enable_telemetry"), 0)
 		self.assertTrue(frappe.db.get_value("Currency", "EGP", "enabled"))
 		self.assertEqual(frappe.db.get_value("Company", TEST_COMPANY, "default_currency"), "EGP")
 
@@ -93,6 +94,33 @@ class TestProvision(IntegrationTestCase):
 			provision_site(other, "MTSPC")
 		self.assertIn(TEST_COMPANY, str(caught.exception))
 		self.assertFalse(frappe.db.exists("Company", other))
+
+	def test_provision_refuses_on_site_with_other_companies_unpatched(self):
+		# No patching: this site really has several companies, so a new name is refused.
+		other = "Mizan Test Unpatched Co"
+		self.assertGreater(frappe.db.count("Company", {"name": ("!=", other)}), 0)
+		self.assertFalse(frappe.db.exists("Company", other))
+		count = frappe.db.count("Company")
+		with self.assertRaises(frappe.ValidationError):
+			provision_site(other, "MTUC", language=self.language)
+		self.assertFalse(frappe.db.exists("Company", other))
+		self.assertEqual(frappe.db.count("Company"), count)
+
+	def test_telemetry_choice_kept_after_first_run(self):
+		# Setup already complete: a later admin choice to share usage data is not undone.
+		with only_company(TEST_COMPANY):
+			provision_site(TEST_COMPANY, TEST_ABBR, language=self.language)
+			frappe.db.set_single_value("System Settings", "enable_telemetry", 1)
+			provision_site(TEST_COMPANY, TEST_ABBR, language=self.language)
+		self.assertEqual(frappe.db.get_single_value("System Settings", "enable_telemetry"), 1)
+
+	def test_different_abbr_refused(self):
+		with only_company(TEST_COMPANY):
+			provision_site(TEST_COMPANY, TEST_ABBR, language=self.language)
+			with self.assertRaises(frappe.ValidationError) as caught:
+				provision_site(TEST_COMPANY, "XYZ", language=self.language)
+		self.assertIn(TEST_ABBR, str(caught.exception))
+		self.assertEqual(frappe.db.get_value("Company", TEST_COMPANY, "abbr"), TEST_ABBR)
 
 	def test_invalid_language_rejected(self):
 		before = frappe.db.get_single_value("System Settings", "language")

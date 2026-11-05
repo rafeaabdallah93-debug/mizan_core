@@ -54,6 +54,13 @@ def provision_site(company: str, abbr: str, language: str = "en") -> None:
 				"provision a new site for {1}."
 			).format(", ".join(others), company)
 		)
+	existing_abbr = frappe.db.get_value("Company", company, "abbr")
+	if existing_abbr and existing_abbr != abbr:
+		frappe.throw(
+			_("Company {0} already exists with abbreviation {1}, not {2}.").format(
+				company, existing_abbr, abbr
+			)
+		)
 
 	first_run = not frappe.is_setup_complete()
 	if first_run and not frappe.db.count("Company"):
@@ -104,6 +111,9 @@ def _apply_wizard_settings() -> None:
 
 	# Frappe's run_setup_success: genders, salutations, global search, dashboards.
 	frappe_fixtures.install()
+
+	# The wizard's telemetry checkbox (apply_telemetry_preference): Mizan sites opt out.
+	frappe.db.set_single_value("System Settings", "enable_telemetry", 0)
 
 
 def _set_language(language: str) -> None:
