@@ -9,6 +9,16 @@ TEST_EMAIL = "mizan-lang-test@example.com"
 
 class TestLanguages(IntegrationTestCase):
 	def test_ar_and_en_enabled(self):
+		# The rows must exist, otherwise "disabling" them below would pass vacuously.
+		for lang in ("ar", "en"):
+			self.assertTrue(frappe.db.exists("Language", lang), f"Language {lang} missing")
+
+		def restore():
+			for lang in ("ar", "en"):
+				frappe.db.set_value("Language", lang, "enabled", 1)
+			frappe.clear_cache()
+
+		self.addCleanup(restore)
 		# Start from a disabled state so the test proves enable_languages() does the work.
 		for lang in ("ar", "en"):
 			frappe.db.set_value("Language", lang, "enabled", 0)
