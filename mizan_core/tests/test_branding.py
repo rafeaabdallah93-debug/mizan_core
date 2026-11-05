@@ -1,7 +1,7 @@
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from mizan_core.branding import BRAND_NAME_AR, BRAND_NAME_EN, apply_branding
+from mizan_core.branding import BRAND_NAME_AR, BRAND_NAME_EN, apply_branding, rewrite_boot_apps
 
 
 class TestBranding(IntegrationTestCase):
@@ -32,3 +32,16 @@ class TestBranding(IntegrationTestCase):
 		first = snapshot()
 		apply_branding()
 		self.assertEqual(first, snapshot())
+
+	def test_boot_apps_show_brand(self):
+		from frappe.boot import get_app_data
+
+		bootinfo = frappe._dict(app_data=get_app_data())
+		rewrite_boot_apps(bootinfo)
+		self.assertTrue(bootinfo.app_data)
+		for app in bootinfo.app_data:
+			self.assertNotIn("erpnext", (app.get("app_title") or "").lower())
+			logo = app.get("app_logo_url")
+			logos = logo if isinstance(logo, list | tuple) else [logo]
+			for item in logos:
+				self.assertNotIn("erpnext", (item or "").lower())
