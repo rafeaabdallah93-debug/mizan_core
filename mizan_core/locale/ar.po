@@ -1,0 +1,40 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: mizan_core\n"
+"Language: ar\n"
+"Language-Team: Arabic\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);\n"
+
+msgid "A company name is required."
+msgstr "اسم الشركة مطلوب."
+
+#, python-brace-format
+msgid "Company {0} already exists with abbreviation {1}, not {2}."
+msgstr "الشركة {0} موجودة بالفعل بالاختصار {1}، وليس {2}."
+
+#, python-brace-format
+msgid "Company {0} already has its own chart of accounts (or ledger entries). Mizan will not replace it; import the Egyptian chart manually or use a new company."
+msgstr "لدى الشركة {0} دليل حسابات خاص بها بالفعل (أو قيود محاسبية). لن يستبدله ميزان؛ استورد دليل الحسابات المصري يدويًا أو استخدم شركة جديدة."
+
+#, python-brace-format
+msgid "Language must be one of {0}, not {1}."
+msgstr "يجب أن تكون اللغة واحدة من {0}، وليس {1}."
+
+#, python-brace-format
+msgid "Tax template {0} has a VAT rate or price-inclusion setting that differs from Mizan's Egyptian defaults (VAT {1}%, prices include VAT: {2}), but it is already used in transactions, so it will not be edited. Create a new tax template with the new settings, make it the default, and disable {0}."
+msgstr "قالب الضريبة {0} فيه نسبة ضريبة قيمة مضافة أو إعداد لشمول الأسعار للضريبة يختلف عن الإعدادات المصرية الافتراضية في ميزان (ضريبة القيمة المضافة {1}%، الأسعار شاملة الضريبة: {2})، لكنه مستخدم بالفعل في معاملات، لذلك لن يُعدَّل. أنشئ قالب ضريبة جديدًا بالإعدادات الجديدة، واجعله الافتراضي، ثم عطِّل {0}."
+
+#, python-brace-format
+msgid "Tax template {0} must have exactly one row on VAT account {1}."
+msgstr "يجب أن يحتوي قالب الضريبة {0} على سطر واحد فقط لحساب ضريبة القيمة المضافة {1}."
+
+#, python-brace-format
+msgid "This site already has another company ({0}). Mizan uses one company per site; provision a new site for {1}."
+msgstr "يحتوي هذا الموقع بالفعل على شركة أخرى ({0}). يستخدم ميزان شركة واحدة لكل موقع؛ أنشئ موقعًا جديدًا للشركة {1}."
+
+#, python-brace-format
+msgid "VAT account {0} from the Egyptian chart is missing for company {1}"
+msgstr "حساب ضريبة القيمة المضافة {0} من دليل الحسابات المصري غير موجود للشركة {1}"

@@ -129,3 +129,14 @@ class TestProvision(IntegrationTestCase):
 				with self.assertRaises(frappe.ValidationError):
 					provision_site(TEST_COMPANY, TEST_ABBR, language=language)
 		self.assertEqual(frappe.db.get_single_value("System Settings", "language"), before)
+
+
+class TestProvisionDefaults(IntegrationTestCase):
+	def test_default_language_is_arabic(self):
+		import inspect
+
+		from mizan_core.commands import mizan_provision
+
+		self.assertEqual(inspect.signature(provision_site).parameters["language"].default, "ar")
+		option = next(p for p in mizan_provision.params if p.name == "language")
+		self.assertEqual(option.default, "ar")

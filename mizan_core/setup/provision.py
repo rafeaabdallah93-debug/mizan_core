@@ -8,7 +8,7 @@ erpnext/setup/setup_wizard/), with apply_egypt_defaults() in place of the wizard
 
 Command line (non-interactive, used by packaging):
 
-    bench --site <site> mizan-provision --company "<name>" --abbr <ABBR> [--language ar]
+    bench --site <site> mizan-provision --company "<name>" --abbr <ABBR> [--language ar|en]   (default ar)
 
 provision_site() is safe to call repeatedly with the same arguments. It does not commit; the
 bench command commits.
@@ -32,9 +32,9 @@ WIZARD_HOME_PAGE = "setup-wizard"
 HOME_PAGE_AFTER_SETUP = "workspace"
 
 
-def provision_site(company: str, abbr: str, language: str = "en") -> None:
+def provision_site(company: str, abbr: str, language: str = "ar") -> None:
 	"""Set this site up with `company` as its only company, Egyptian defaults and `language`
-	("en" or "ar") as the default language, and mark the setup wizard complete.
+	("ar", the default, or "en") as the default language, and mark the setup wizard complete.
 
 	Refuses (before changing anything) if the site has any other company, or if `language` is
 	not supported.

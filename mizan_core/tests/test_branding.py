@@ -45,3 +45,22 @@ class TestBranding(IntegrationTestCase):
 			logos = logo if isinstance(logo, list | tuple) else [logo]
 			for item in logos:
 				self.assertNotIn("erpnext", (item or "").lower())
+
+	def test_emails_carry_no_erpnext_footer(self):
+		from frappe.email.email_body import get_footer
+
+		apply_branding()
+		self.assertEqual(frappe.db.get_single_value("System Settings", "disable_standard_email_footer"), 1)
+		self.assertNotIn("erpnext", get_footer(None).lower())
+
+	def test_no_visible_workspace_named_erpnext(self):
+		apply_branding()
+		for workspace in frappe.get_all(
+			"Workspace", filters={"public": 1, "is_hidden": 0}, fields=["name", "label", "title"]
+		):
+			for value in (workspace.label, workspace.title):
+				self.assertNotIn("erpnext", (value or "").lower(), workspace.name)
+		if frappe.db.exists("Workspace", "ERPNext Settings"):
+			self.assertEqual(
+				frappe.db.get_value("Workspace", "ERPNext Settings", ["label", "title"]), ("Settings", "Settings")
+			)

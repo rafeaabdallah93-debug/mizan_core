@@ -1,7 +1,7 @@
 [project]
 name = "mizan_core"
 authors = [
-    { name = "Mizan", email = "dev@mizan.example"}
+    { name = "Mizan" }
 ]
 description = "Egyptian retail ERP customizations for ERPNext: branding, languages and Egyptian defaults"
 requires-python = ">=3.10"

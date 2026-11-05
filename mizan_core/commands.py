@@ -9,7 +9,7 @@ from frappe.commands import get_site, pass_context
 @click.command("mizan-provision")
 @click.option("--company", required=True, help="Name of the site's one company")
 @click.option("--abbr", required=True, help="Company abbreviation, e.g. MZN")
-@click.option("--language", default="en", show_default=True, help="Default language: en or ar")
+@click.option("--language", default="ar", show_default=True, help="Default language: ar or en")
 @pass_context
 def mizan_provision(context, company, abbr, language):
 	"""Set up a new site: one company with Egyptian defaults; the setup wizard is skipped."""
