@@ -1,0 +1,44 @@
+Account Number,Account Name,Arabic Name
+1000,Assets,الأصول
+1100,Cash on Hand,النقدية بالصندوق
+1110,Petty Cash,عهدة نقدية / نثرية
+1200,Banks,البنوك
+1210,Bank Current Account,البنك - حساب جاري
+1300,Accounts Receivable,العملاء
+1400,Inventory,المخزون السلعي
+1500,Input VAT Recoverable,ضريبة القيمة المضافة - مدخلات
+1510,Withholding Tax Receivable,ضريبة خصم وإضافة مدينة (مخصومة من العملاء)
+1600,Fixed Assets,الأصول الثابتة
+1690,Accumulated Depreciation,مجمع الإهلاك
+1900,Temporary Opening,حساب افتتاحي مؤقت
+2000,Liabilities,الالتزامات
+2100,Accounts Payable,الموردون
+2110,Stock Received But Not Billed,بضاعة مستلمة لم تصل فواتيرها
+2120,Asset Received But Not Billed,أصول مستلمة لم تصل فواتيرها
+2200,Output VAT Payable,ضريبة القيمة المضافة - مخرجات
+2210,Net VAT Due to Tax Authority,ضريبة القيمة المضافة المستحقة للمصلحة
+2220,Withholding Tax Payable,ضريبة خصم وإضافة دائنة (مخصومة من الموردين)
+2230,Table Tax Payable,ضريبة الجدول المستحقة
+2240,Payroll Tax and Social Insurance Payable,ضريبة كسب العمل والتأمينات المستحقة
+2300,Accrued Expenses,مصروفات مستحقة
+3000,Equity,حقوق الملكية
+3100,Owner's Capital,رأس المال
+3200,Retained Earnings,الأرباح المرحلة
+3300,Owner's Drawings,مسحوبات الشريك / المالك
+4000,Revenue,الإيرادات
+4100,Sales,المبيعات
+4190,Sales Returns and Discounts,مردودات ومسموحات المبيعات
+5000,Cost of Sales,تكلفة البضاعة المباعة
+5100,Cost of Goods Sold,تكلفة المبيعات
+5200,Inventory Adjustments and Shrinkage,فروق جرد وتالف
+5300,Expenses Included In Valuation,مصروفات محملة على تكلفة المخزون
+6000,Operating Expenses,المصروفات التشغيلية
+6100,Salaries and Wages,الأجور والمرتبات
+6200,Rent,الإيجار
+6300,Utilities,مرافق (كهرباء ومياه وإنترنت)
+6400,Bank and Card Fees,عمولات بنكية وبطاقات
+6500,Depreciation,الإهلاك
+6900,Other Expenses,مصروفات أخرى
+6910,Write Off,مصروفات شطب
+6920,Exchange Gain/Loss,أرباح / خسائر فروق العملة
+6930,Round Off,فروق التقريب
