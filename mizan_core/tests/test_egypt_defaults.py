@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import frappe
 from erpnext.accounts.utils import get_fiscal_year
 from frappe.tests import IntegrationTestCase
@@ -227,11 +229,49 @@ class TestEgyptDefaults(IntegrationTestCase):
 	def test_system_settings_saved_on_bare_site(self):
 		# A fresh site (setup wizard never ran): no System Settings language, so saving System
 		# Settings failed; no default company and ERPNext's install default currency INR.
+		# This site has other companies, so "bare" is forced; the detection itself is covered by
+		# test_site_with_other_companies_is_not_bare (and by CI's fresh site).
 		frappe.db.set_single_value("System Settings", {"language": "", "time_zone": "Asia/Kolkata"})
 		frappe.db.set_single_value("Global Defaults", {"default_company": "", "default_currency": "INR"})
-		apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
+		with patch("mizan_core.setup.egypt_defaults._is_bare_site", return_value=True):
+			apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
 		self.assertEqual(frappe.db.get_single_value("System Settings", "time_zone"), "Africa/Cairo")
 		self.assertTrue(frappe.db.get_single_value("System Settings", "language"))
 		self.assertEqual(frappe.db.get_single_value("System Settings", "country"), "Egypt")
 		self.assertEqual(frappe.db.get_single_value("Global Defaults", "default_company"), TEST_COMPANY)
 		self.assertEqual(frappe.db.get_single_value("Global Defaults", "default_currency"), "EGP")
+
+	def test_site_with_other_companies_is_not_bare(self):
+		# Empty default_company alone does not mean a bare site: ERPNext clears it when the
+		# default company is deleted, and never sets it on company creation.
+		if not frappe.db.exists("Company", "Mizan Test USD Co"):
+			frappe.get_doc(
+				{
+					"doctype": "Company",
+					"company_name": "Mizan Test USD Co",
+					"abbr": "MTUSD",
+					"country": "United States",
+					"default_currency": "USD",
+				}
+			).insert()
+		frappe.db.set_single_value(
+			"Global Defaults", {"default_company": "", "default_currency": "USD", "country": "United States"}
+		)
+		frappe.db.set_single_value(
+			"System Settings", {"country": "United States", "currency": "USD", "date_format": "mm-dd-yyyy"}
+		)
+		fields = {
+			"System Settings": ("country", "currency", "date_format", "time_format", "number_format"),
+			"Global Defaults": ("default_currency", "country"),
+		}
+
+		def snapshot():
+			return {
+				(doctype, field): frappe.db.get_single_value(doctype, field)
+				for doctype, names in fields.items()
+				for field in names
+			}
+
+		before = snapshot()
+		apply_egypt_defaults("Mizan Test Second EG Co", abbr="MTSEG")
+		self.assertEqual(snapshot(), before)

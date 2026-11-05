@@ -106,7 +106,7 @@ def apply_egypt_defaults(company: str, abbr: str | None = None) -> None:
 		)
 
 	# Records the setup wizard would have made; a fresh site has none of them.
-	bare_site = _is_bare_site()
+	bare_site = _is_bare_site(company)
 	_ensure_system_settings(bare_site)
 	_ensure_setup_fixtures()
 
@@ -529,12 +529,18 @@ def _ensure_setup_fixtures() -> None:
 		if empty[doctype]:
 			records.append(record)
 	make_records(records)
-	install_fixtures.add_uom_data()  # skips existing UOMs and conversion factors
+	if not frappe.db.count("UOM"):
+		install_fixtures.add_uom_data()
 
 
-def _is_bare_site() -> bool:
-	"""True when ERPNext's setup wizard never ran: no default company in Global Defaults."""
-	return not frappe.db.get_single_value("Global Defaults", "default_company")
+def _is_bare_site(company: str) -> bool:
+	"""True when ERPNext's setup wizard never ran: no default company in Global Defaults AND no
+	company other than `company` exists. An empty default_company alone is not enough: ERPNext
+	clears it when the default company is deleted and never sets it on company creation, and a
+	site with other companies must keep its System Settings and Global Defaults."""
+	if frappe.db.get_single_value("Global Defaults", "default_company"):
+		return False
+	return not frappe.db.exists("Company", {"name": ("!=", company)})
 
 
 def _ensure_system_settings(bare_site: bool) -> None:
