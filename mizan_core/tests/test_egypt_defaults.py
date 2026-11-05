@@ -27,6 +27,9 @@ def template_row(doctype, company=TEST_COMPANY):
 class TestEgyptDefaults(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
+		# Registered first so it runs last (LIFO), after the class rollback: drop cached
+		# settings/defaults that tests changed only inside the rolled-back transaction.
+		cls.addClassCleanup(frappe.clear_cache)
 		super().setUpClass()
 		# Rerunnable: works whether or not an earlier run left the company behind.
 		apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
@@ -148,29 +151,26 @@ class TestEgyptDefaults(IntegrationTestCase):
 		today = nowdate()
 		covering = frappe.get_all(
 			"Fiscal Year",
-			filters={"disabled": 0, "year_start_date": ("<=", today), "year_end_date": (">=", today)},
+			filters={"year_start_date": ("<=", today), "year_end_date": (">=", today)},
 			pluck="name",
 		)
 		self.addCleanup(frappe.cache().delete_key, "fiscal_years")
-		try:
-			# Simulate a real customer site, which has no fiscal year for today.
-			for name in covering:
-				frappe.db.set_value("Fiscal Year", name, "disabled", 1)
-			frappe.cache().delete_key("fiscal_years")
+		# Simulate a real customer site, which has no fiscal year for today. Raw deletes inside
+		# the test transaction; the class rollback restores them.
+		for name in covering:
+			frappe.db.delete("Fiscal Year Company", {"parent": name})
+			frappe.db.delete("Fiscal Year", {"name": name})
+		frappe.cache().delete_key("fiscal_years")
 
-			apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
-			count = frappe.db.count("Fiscal Year")
-			apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
-			self.assertEqual(frappe.db.count("Fiscal Year"), count)
+		apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
+		count = frappe.db.count("Fiscal Year")
+		apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
+		self.assertEqual(frappe.db.count("Fiscal Year"), count)
 
-			frappe.cache().delete_key("fiscal_years")
-			fiscal_year = get_fiscal_year(today, company=TEST_COMPANY, as_dict=True)
-			self.assertNotIn(fiscal_year.name, covering)
-			self.assertEqual(str(fiscal_year.year_start_date)[5:], "01-01")
-			self.assertEqual(str(fiscal_year.year_end_date)[5:], "12-31")
-		finally:
-			for name in covering:
-				frappe.db.set_value("Fiscal Year", name, "disabled", 0)
+		frappe.cache().delete_key("fiscal_years")
+		fiscal_year = get_fiscal_year(today, company=TEST_COMPANY, as_dict=True)
+		self.assertEqual(str(fiscal_year.year_start_date)[5:], "01-01")
+		self.assertEqual(str(fiscal_year.year_end_date)[5:], "12-31")
 
 	def test_existing_standard_company_is_converted_custom_chart_refused(self):
 		company = "Mizan Test Std Co"
@@ -213,3 +213,25 @@ class TestEgyptDefaults(IntegrationTestCase):
 		)
 		self.assertFalse(frappe.db.exists("Account", {"company": company, "account_name": "GST"}))
 		self.assertFalse(frappe.db.exists(SALES_TEMPLATE, {"company": company, "title": "Egypt Tax"}))
+
+	def test_new_company_without_setup_wizard_records(self):
+		# Reproduces a fresh site (setup wizard never ran): no Warehouse Type "Transit", which
+		# Company.create_default_warehouses() links to. Raw delete; the class rollback restores it.
+		frappe.db.delete("Warehouse Type", {"name": "Transit"})
+		company = "Mizan Test Fresh Co"
+		apply_egypt_defaults(company, abbr="MTFC")
+		self.assertTrue(frappe.db.exists("Warehouse Type", "Transit"))
+		self.assertTrue(frappe.db.exists("Warehouse", {"company": company, "warehouse_type": "Transit"}))
+		self.assertTrue(frappe.db.get_value("Company", company, "default_cash_account"))
+
+	def test_system_settings_saved_on_bare_site(self):
+		# A fresh site (setup wizard never ran): no System Settings language, so saving System
+		# Settings failed; no default company and ERPNext's install default currency INR.
+		frappe.db.set_single_value("System Settings", {"language": "", "time_zone": "Asia/Kolkata"})
+		frappe.db.set_single_value("Global Defaults", {"default_company": "", "default_currency": "INR"})
+		apply_egypt_defaults(TEST_COMPANY, abbr=TEST_ABBR)
+		self.assertEqual(frappe.db.get_single_value("System Settings", "time_zone"), "Africa/Cairo")
+		self.assertTrue(frappe.db.get_single_value("System Settings", "language"))
+		self.assertEqual(frappe.db.get_single_value("System Settings", "country"), "Egypt")
+		self.assertEqual(frappe.db.get_single_value("Global Defaults", "default_company"), TEST_COMPANY)
+		self.assertEqual(frappe.db.get_single_value("Global Defaults", "default_currency"), "EGP")

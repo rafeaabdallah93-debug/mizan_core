@@ -92,15 +92,25 @@ def apply_egypt_defaults(company: str, abbr: str | None = None) -> None:
 
 	`abbr` is only used when the company does not exist yet (default: initials of the name).
 	"""
+	# Refuse before changing anything: a custom chart is never replaced.
+	if (
+		frappe.db.exists("Company", company)
+		and not _chart_present(company)
+		and not _company_has_replaceable_chart(company)
+	):
+		frappe.throw(
+			_(
+				"Company {0} already has its own chart of accounts (or ledger entries). Mizan will "
+				"not replace it; import the Egyptian chart manually or use a new company."
+			).format(frappe.bold(company))
+		)
+
+	# Records the setup wizard would have made; a fresh site has none of them.
+	bare_site = _is_bare_site()
+	_ensure_system_settings(bare_site)
+	_ensure_setup_fixtures()
+
 	if frappe.db.exists("Company", company):
-		# Refuse before changing anything: a custom chart is never replaced.
-		if not _chart_present(company) and not _company_has_replaceable_chart(company):
-			frappe.throw(
-				_(
-					"Company {0} already has its own chart of accounts (or ledger entries). Mizan will "
-					"not replace it; import the Egyptian chart manually or use a new company."
-				).format(frappe.bold(company))
-			)
 		_update_company(company)
 	else:
 		_create_company(company, abbr or _initials(company))
@@ -111,7 +121,8 @@ def apply_egypt_defaults(company: str, abbr: str | None = None) -> None:
 	_set_default_accounts(company)
 	_ensure_vat_templates(company)
 	_ensure_fiscal_year(company)
-	_set_time_zone()
+	_ensure_price_lists()
+	_ensure_global_defaults(company, bare_site)
 
 
 def _initials(name: str) -> str:
@@ -465,8 +476,123 @@ def _ensure_fiscal_year(company: str) -> None:
 	frappe.cache().delete_key("fiscal_years")
 
 
-def _set_time_zone() -> None:
-	if frappe.db.get_single_value("System Settings", "time_zone") != EGYPT_TIME_ZONE:
-		settings = frappe.get_single("System Settings")
-		settings.time_zone = EGYPT_TIME_ZONE
+# --- Site prerequisites normally made by ERPNext's setup wizard ----------------------------
+#
+# A fresh site (bench new-site --install-app erpnext) has none of the records the setup
+# wizard creates: no Warehouse Type "Transit" (Company.create_default_warehouses fails), no
+# Item/Customer/Supplier Group or Territory roots, no UOMs, no Mode of Payment, no price
+# lists, and an empty System Settings language (so System Settings cannot be saved).
+
+
+def _missing_setup_fixtures() -> bool:
+	from frappe.utils.nestedset import get_root_of
+
+	markers = (
+		("Warehouse Type", "Transit"),
+		("UOM", "Nos"),
+		("Mode of Payment", {"type": "Cash"}),
+		("Party Type", "Customer"),
+		("Stock Entry Type", "Material Receipt"),
+	)
+	if any(not frappe.db.exists(doctype, name) for doctype, name in markers):
+		return True
+	return not all(
+		get_root_of(doctype) for doctype in ("Item Group", "Customer Group", "Supplier Group", "Territory")
+	)
+
+
+def _ensure_setup_fixtures() -> None:
+	"""Create the wizard's master records if missing, using ERPNext's own installers.
+
+	Only the record parts of install_fixtures.install() are used (get_preset_records + UOMs):
+	no company, no taxes (so no GST placeholder), and no overwriting of Selling/Buying settings.
+	Only missing records are created.
+	"""
+	if not _missing_setup_fixtures():
+		return
+	from erpnext.setup.setup_wizard.operations import install_fixtures
+	from frappe.desk.page.setup_wizard.setup_wizard import make_records
+
+	# Only doctypes the site has no records of: re-inserting into existing trees (Item Group
+	# etc.) makes ERPNext log NestedSetRecursionError, and existing data is never touched.
+	# Warehouse Type is the exception: its single record is checked by name.
+	empty = {}
+	records = []
+	for record in install_fixtures.get_preset_records(EGYPT_COUNTRY):
+		doctype = record["doctype"]
+		if doctype == "Warehouse Type":
+			if not frappe.db.exists("Warehouse Type", record["name"]):
+				records.append(record)
+			continue
+		if doctype not in empty:
+			empty[doctype] = not frappe.db.count(doctype)
+		if empty[doctype]:
+			records.append(record)
+	make_records(records)
+	install_fixtures.add_uom_data()  # skips existing UOMs and conversion factors
+
+
+def _is_bare_site() -> bool:
+	"""True when ERPNext's setup wizard never ran: no default company in Global Defaults."""
+	return not frappe.db.get_single_value("Global Defaults", "default_company")
+
+
+def _ensure_system_settings(bare_site: bool) -> None:
+	"""Egypt time zone always. On a bare site, also the values the setup wizard sets
+	(frappe.desk.page.setup_wizard.setup_wizard.update_system_settings); otherwise only
+	empty fields are filled (a missing language makes System Settings unsaveable)."""
+	from frappe.geo.country_info import get_country_info
+
+	settings = frappe.get_single("System Settings")
+	country_info = get_country_info(EGYPT_COUNTRY) or {}
+	wizard_values = {
+		"country": EGYPT_COUNTRY,
+		"currency": EGYPT_CURRENCY,
+		"date_format": frappe.db.get_value("Country", EGYPT_COUNTRY, "date_format") or "dd-mm-yyyy",
+		"time_format": frappe.db.get_value("Country", EGYPT_COUNTRY, "time_format") or "HH:mm:ss",
+		"number_format": country_info.get("number_format") or "#,###.##",
+	}
+	wanted = {"time_zone": EGYPT_TIME_ZONE}
+	if not settings.language:
+		wanted["language"] = "en"
+	wanted.update({key: value for key, value in wizard_values.items() if bare_site or not settings.get(key)})
+	changes = {key: value for key, value in wanted.items() if settings.get(key) != value}
+	if changes:
+		settings.update(changes)
 		settings.save(ignore_permissions=True)
+
+
+def _ensure_price_lists() -> None:
+	"""Standard Selling / Standard Buying in EGP if missing; set as defaults only where empty."""
+	for name, selling, settings_doctype, field in (
+		("Standard Selling", 1, "Selling Settings", "selling_price_list"),
+		("Standard Buying", 0, "Buying Settings", "buying_price_list"),
+	):
+		if not frappe.db.exists("Price List", name):
+			frappe.get_doc(
+				{
+					"doctype": "Price List",
+					"price_list_name": name,
+					"enabled": 1,
+					"selling": selling,
+					"buying": int(not selling),
+					"currency": EGYPT_CURRENCY,
+				}
+			).insert(ignore_permissions=True)
+		if not frappe.db.get_single_value(settings_doctype, field):
+			frappe.db.set_single_value(settings_doctype, field, name)
+
+
+def _ensure_global_defaults(company: str, bare_site: bool) -> None:
+	"""On a bare site, make this company the default with EGP (as the setup wizard would;
+	ERPNext's install leaves default_currency INR). Otherwise only fill empty fields."""
+	defaults = frappe.get_single("Global Defaults")
+	wanted = {"default_company": company, "default_currency": EGYPT_CURRENCY, "country": EGYPT_COUNTRY}
+	changes = {
+		key: value
+		for key, value in wanted.items()
+		if (bare_site or not defaults.get(key)) and defaults.get(key) != value
+	}
+	if changes:
+		defaults.update(changes)
+		defaults.save(ignore_permissions=True)
