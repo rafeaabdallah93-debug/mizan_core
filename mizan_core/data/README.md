@@ -33,7 +33,12 @@ cannot carry a comment or marker row. The marker is kept in this file and in the
 
 1. Confirm the standard VAT rate (14%) and the accounts used: sales VAT posts to
    2200 Output VAT Payable, purchase VAT to 1500 Input VAT Recoverable.
+   Confirm that shelf prices include VAT (`PRICES_INCLUDE_VAT`, sales template only).
 2. Correct codes, English names and Arabic wording; add missing accounts (stamp duty,
    social insurance detail, Table Tax by rate).
-3. Then remove the UNVERIFIED markers here, in `CHART_OF_ACCOUNTS_STATUS` and on
-   `EGYPT_VAT_RATE`.
+3. Then remove the UNVERIFIED markers here, in `CHART_OF_ACCOUNTS_STATUS`, on
+   `EGYPT_VAT_RATE` and on `PRICES_INCLUDE_VAT`.
+
+Changing `EGYPT_VAT_RATE` or `PRICES_INCLUDE_VAT` later updates the "Egypt VAT" templates on the
+next `apply_egypt_defaults` call only while they are unused; once a transaction uses a template,
+the call stops with a message asking for a new template.

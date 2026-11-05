@@ -1,6 +1,13 @@
-"""Egyptian defaults for a company: country, currency, time zone, chart of accounts and VAT.
+"""Egyptian defaults for a company: country, currency, time zone, fiscal year, chart of accounts
+and VAT.
 
-apply_egypt_defaults() is idempotent: calling it again on a configured company changes nothing.
+apply_egypt_defaults() is safe to call repeatedly: on a configured company it changes nothing.
+
+Chart of accounts: the first call imports the Egyptian chart into a company that has no accounts,
+or that still has only the chart ERPNext created for it (Standard template, no GL entries) - in
+that case ERPNext's default chart is REPLACED. A company that already has the Egyptian chart is
+never re-imported. A company with any other (custom) chart is refused with an error rather than
+wiped.
 
 ERPNext ships a placeholder for Egypt in setup/setup_wizard/data/country_wise_tax.json
 ("Egypt Tax" templates on a "GST" account at 10%). It is applied by
@@ -11,14 +18,19 @@ removes the placeholder if it was created some other way (for example a country 
 existing company).
 """
 
+import csv
 import os
 
 import frappe
 from frappe import _
+from frappe.utils import cint, flt, getdate, nowdate
 
 # UNVERIFIED: 14% from secondary sources only (see data/README.md). An Egyptian accountant
 # must confirm before go-live.
 EGYPT_VAT_RATE = 14.0  # UNVERIFIED
+# Retail shelf prices in Egypt include VAT: the SALES template is tax-inclusive
+# (included_in_print_rate). The purchase template stays exclusive.
+PRICES_INCLUDE_VAT = True  # UNVERIFIED (accountant to confirm)
 TAX_TEMPLATE_TITLE = "Egypt VAT"
 
 EGYPT_COUNTRY = "Egypt"
@@ -34,14 +46,22 @@ CHART_OF_ACCOUNTS_CSV = os.path.join(_DATA_DIR, "egypt_chart_of_accounts.csv")
 CHART_OF_ACCOUNTS_AR_CSV = os.path.join(_DATA_DIR, "egypt_chart_of_accounts_ar.csv")
 
 # Account numbers in the chart CSV that the defaults below depend on.
-CHART_MARKER_ACCOUNT_NUMBER = "1100"  # Cash on Hand; its presence means the chart is imported
 SALES_VAT_ACCOUNT_NUMBER = "2200"  # Output VAT Payable
 PURCHASE_VAT_ACCOUNT_NUMBER = "1500"  # Input VAT Recoverable
+
+SALES_TEMPLATE = "Sales Taxes and Charges Template"
+PURCHASE_TEMPLATE = "Purchase Taxes and Charges Template"
+# Transactions whose `taxes_and_charges` links to each template type.
+TEMPLATE_TRANSACTIONS = {
+	SALES_TEMPLATE: ("Quotation", "Sales Order", "Delivery Note", "Sales Invoice", "POS Invoice"),
+	PURCHASE_TEMPLATE: ("Supplier Quotation", "Purchase Order", "Purchase Receipt", "Purchase Invoice"),
+}
 
 # ERPNext's placeholder from country_wise_tax.json for Egypt, and the group
 # taxes_setup.get_or_create_tax_group() creates for it when the chart has no Tax group.
 PLACEHOLDER_TEMPLATE_TITLE = "Egypt Tax"
 PLACEHOLDER_ACCOUNT_NAME = "GST"
+PLACEHOLDER_RATE = 10.0
 PLACEHOLDER_GROUP_NAME = "Duties and Taxes"
 
 # Company default-account fields filled from the chart, by account type (lowest number wins).
@@ -73,15 +93,24 @@ def apply_egypt_defaults(company: str, abbr: str | None = None) -> None:
 	`abbr` is only used when the company does not exist yet (default: initials of the name).
 	"""
 	if frappe.db.exists("Company", company):
+		# Refuse before changing anything: a custom chart is never replaced.
+		if not _chart_present(company) and not _company_has_replaceable_chart(company):
+			frappe.throw(
+				_(
+					"Company {0} already has its own chart of accounts (or ledger entries). Mizan will "
+					"not replace it; import the Egyptian chart manually or use a new company."
+				).format(frappe.bold(company))
+			)
 		_update_company(company)
 	else:
 		_create_company(company, abbr or _initials(company))
 
 	_remove_placeholder_tax(company)
-	if not _chart_imported(company):
+	if not _chart_present(company):
 		_import_chart(company)
 	_set_default_accounts(company)
-	_create_vat_templates(company)
+	_ensure_vat_templates(company)
+	_ensure_fiscal_year(company)
 	_set_time_zone()
 
 
@@ -119,28 +148,43 @@ def _update_company(company: str) -> None:
 	doc.save(ignore_permissions=True)
 
 
+# --- ERPNext placeholder ------------------------------------------------------------------
+
+
+def _is_placeholder_template(doctype: str, name: str) -> bool:
+	"""True only for ERPNext's seeded template: a single row at the placeholder 10% rate."""
+	rows = frappe.get_doc(doctype, name).taxes
+	rate_field = "tax_rate" if doctype == "Item Tax Template" else "rate"
+	return len(rows) == 1 and flt(rows[0].get(rate_field)) == PLACEHOLDER_RATE
+
+
 def _remove_placeholder_tax(company: str) -> None:
-	for doctype in (
-		"Sales Taxes and Charges Template",
-		"Purchase Taxes and Charges Template",
-		"Item Tax Template",
-	):
+	for doctype in (SALES_TEMPLATE, PURCHASE_TEMPLATE, "Item Tax Template"):
 		for name in frappe.get_all(
 			doctype, filters={"company": company, "title": PLACEHOLDER_TEMPLATE_TITLE}, pluck="name"
 		):
-			frappe.delete_doc(doctype, name, ignore_permissions=True)
+			if _is_placeholder_template(doctype, name):
+				frappe.delete_doc(doctype, name, ignore_permissions=True)
 
 	for name in frappe.get_all(
 		"Account",
-		filters={"company": company, "account_name": PLACEHOLDER_ACCOUNT_NAME, "is_group": 0},
+		filters={
+			"company": company,
+			"account_name": PLACEHOLDER_ACCOUNT_NAME,
+			"account_type": "Tax",
+			"is_group": 0,
+		},
 		pluck="name",
 	):
 		if frappe.db.exists("GL Entry", {"account": name}):
-			frappe.throw(_("Cannot remove placeholder tax account {0}: it has ledger entries.").format(name))
-		frappe.delete_doc("Account", name, ignore_permissions=True)
+			continue  # used in the books: leave it for the accountant
+		try:
+			frappe.delete_doc("Account", name, ignore_permissions=True)
+		except frappe.LinkExistsError:
+			pass  # still referenced (e.g. a user-edited template): leave it
 
 	# Our chart has no "Duties and Taxes" group; if ERPNext added one for the placeholder, drop it.
-	if _chart_imported(company):
+	if _chart_present(company):
 		for name in frappe.get_all(
 			"Account",
 			filters={"company": company, "account_name": PLACEHOLDER_GROUP_NAME, "is_group": 1},
@@ -150,10 +194,63 @@ def _remove_placeholder_tax(company: str) -> None:
 				frappe.delete_doc("Account", name, ignore_permissions=True)
 
 
-def _chart_imported(company: str) -> bool:
-	return bool(
-		frappe.db.exists("Account", {"company": company, "account_number": CHART_MARKER_ACCOUNT_NUMBER})
+# --- Chart of accounts --------------------------------------------------------------------
+
+
+def _chart_rows() -> list[list[str]]:
+	with open(CHART_OF_ACCOUNTS_CSV, encoding="utf-8") as f:
+		return list(csv.reader(f))[1:]
+
+
+def _chart_present(company: str) -> bool:
+	"""True when most of the chart's (number, name) pairs exist for the company.
+
+	Pairs, not numbers alone: ERPNext's "Standard with Numbers" chart reuses numbers such as
+	1100, 1300 and 2100. A majority, not one account: a renamed or renumbered account must not
+	make the chart look absent (that would trigger a destructive re-import).
+	"""
+	wanted = {(row[2].strip(), row[0].strip().lower()) for row in _chart_rows()}
+	existing = frappe.get_all(
+		"Account",
+		filters={"company": company, "account_number": ("in", [number for number, _name in wanted])},
+		fields=["account_number", "account_name"],
 	)
+	found = {(a.account_number, (a.account_name or "").strip().lower()) for a in existing} & wanted
+	return len(found) * 2 > len(wanted)
+
+
+def _chart_account_names(tree: dict, metadata: set) -> set:
+	names = set()
+	for key, value in tree.items():
+		if key not in metadata and isinstance(value, dict):
+			names.add(key.strip().lower())
+			names |= _chart_account_names(value, metadata)
+	return names
+
+
+def _company_has_replaceable_chart(company: str) -> bool:
+	"""No accounts at all, or only the standard chart ERPNext created, and no GL entries."""
+	accounts = frappe.get_all("Account", filters={"company": company}, pluck="account_name")
+	if not accounts:
+		return True
+	if frappe.db.exists("GL Entry", {"company": company}):
+		return False
+
+	from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import (
+		get_chart,
+		get_chart_metadata_fields,
+	)
+
+	based_on, chart_name = frappe.db.get_value(
+		"Company", company, ["create_chart_of_accounts_based_on", "chart_of_accounts"]
+	)
+	if based_on != "Standard Template" or not chart_name:
+		return False
+	tree = get_chart(chart_name) or {}
+	standard_names = _chart_account_names(tree, set(get_chart_metadata_fields()))
+	# ERPNext may have added its Egypt placeholder account to that chart.
+	standard_names |= {PLACEHOLDER_ACCOUNT_NAME.lower(), PLACEHOLDER_GROUP_NAME.lower()}
+	return bool(standard_names) and {a.strip().lower() for a in accounts} <= standard_names
 
 
 class _AppFile:
@@ -172,6 +269,7 @@ def _import_chart(company: str) -> None:
 	This is import_coa() without its last step: import_coa() ends with
 	set_default_accounts() -> Company.create_default_tax_template(), which seeds the GST
 	placeholder. import_coa() also needs an uploaded File record; the app's CSV is read directly.
+	Only called when _company_has_replaceable_chart() allows it.
 	"""
 	from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import create_charts
 	from erpnext.accounts.doctype.chart_of_accounts_importer.chart_of_accounts_importer import (
@@ -193,10 +291,17 @@ def _import_chart(company: str) -> None:
 	forest = build_forest(data)
 
 	validate_company(company)  # refuses a company that already has GL entries
-	unset_existing_data(company)  # removes any previous chart and its tax templates
+	unset_existing_data(company)  # removes ERPNext's default chart and its tax templates
 
+	previous = frappe.local.flags.ignore_root_company_validation
 	frappe.local.flags.ignore_root_company_validation = True
-	create_charts(company, custom_chart=forest, from_coa_importer=True)
+	try:
+		create_charts(company, custom_chart=forest, from_coa_importer=True)
+	finally:
+		if previous is None:
+			frappe.local.flags.pop("ignore_root_company_validation", None)
+		else:
+			frappe.local.flags.ignore_root_company_validation = previous
 	# Company.on_update() normally does these with the chart; they were skipped on creation.
 	sync_financial_report_templates()
 	frappe.get_doc("Company", company).create_default_warehouses()
@@ -226,6 +331,9 @@ def _set_default_accounts(company: str) -> None:
 		doc.set_mode_of_payment_account()  # no-op when the Cash mode already has this company
 
 
+# --- VAT templates ------------------------------------------------------------------------
+
+
 def _vat_account(company: str, account_number: str) -> str:
 	account = frappe.db.get_value(
 		"Account",
@@ -240,23 +348,36 @@ def _vat_account(company: str, account_number: str) -> str:
 	return account
 
 
-def _create_vat_templates(company: str) -> None:
+def _wanted_vat_row(doctype: str) -> dict:
+	row = {"rate": EGYPT_VAT_RATE, "description": f"VAT @ {EGYPT_VAT_RATE}%"}
+	if doctype == SALES_TEMPLATE:
+		row["included_in_print_rate"] = cint(PRICES_INCLUDE_VAT)
+	return row
+
+
+def _template_used(doctype: str, name: str) -> bool:
+	return any(frappe.db.exists(txn, {"taxes_and_charges": name}) for txn in TEMPLATE_TRANSACTIONS[doctype])
+
+
+def _ensure_vat_templates(company: str) -> None:
 	cost_center = frappe.get_cached_value("Company", company, "cost_center")
 	for doctype, account_number in (
-		("Sales Taxes and Charges Template", SALES_VAT_ACCOUNT_NUMBER),
-		("Purchase Taxes and Charges Template", PURCHASE_VAT_ACCOUNT_NUMBER),
+		(SALES_TEMPLATE, SALES_VAT_ACCOUNT_NUMBER),
+		(PURCHASE_TEMPLATE, PURCHASE_VAT_ACCOUNT_NUMBER),
 	):
-		if frappe.db.exists(doctype, {"company": company, "title": TAX_TEMPLATE_TITLE}):
+		account = _vat_account(company, account_number)
+		name = frappe.db.get_value(doctype, {"company": company, "title": TAX_TEMPLATE_TITLE})
+		if name:
+			_sync_vat_template(doctype, name, account)
 			continue
 		row = {
 			"category": "Total",
 			"charge_type": "On Net Total",
-			"account_head": _vat_account(company, account_number),
-			"description": f"VAT @ {EGYPT_VAT_RATE}%",
-			"rate": EGYPT_VAT_RATE,
+			"account_head": account,
 			"cost_center": cost_center,
+			**_wanted_vat_row(doctype),
 		}
-		if doctype == "Purchase Taxes and Charges Template":
+		if doctype == PURCHASE_TEMPLATE:
 			row["add_deduct_tax"] = "Add"
 		frappe.get_doc(
 			{
@@ -267,6 +388,81 @@ def _create_vat_templates(company: str) -> None:
 				"taxes": [row],
 			}
 		).insert(ignore_permissions=True)
+
+
+def _sync_vat_template(doctype: str, name: str, account: str) -> None:
+	"""Bring an existing "Egypt VAT" template's VAT row in line with the constants.
+
+	Unused templates are updated in place. A template already used by a transaction is never
+	edited (history must not change): the admin is told to create a new template instead.
+	"""
+	doc = frappe.get_doc(doctype, name)
+	rows = [row for row in doc.taxes if row.account_head == account]
+	if len(rows) != 1:
+		frappe.throw(
+			_("Tax template {0} must have exactly one row on VAT account {1}.").format(
+				frappe.bold(name), frappe.bold(account)
+			)
+		)
+	row = rows[0]
+	wanted = _wanted_vat_row(doctype)
+	changed = flt(row.rate) != flt(wanted["rate"]) or (
+		"included_in_print_rate" in wanted
+		and cint(row.included_in_print_rate) != wanted["included_in_print_rate"]
+	)
+	if not changed:
+		return
+	if _template_used(doctype, name):
+		frappe.throw(
+			_(
+				"Tax template {0} has a VAT rate or price-inclusion setting that differs from Mizan's "
+				"Egyptian defaults (VAT {1}%, prices include VAT: {2}), but it is already used in "
+				"transactions, so it will not be edited. Create a new tax template with the new "
+				"settings, make it the default, and disable {0}."
+			).format(frappe.bold(name), EGYPT_VAT_RATE, PRICES_INCLUDE_VAT)
+		)
+	row.update(wanted)
+	doc.save(ignore_permissions=True)
+
+
+# --- Fiscal year and system settings -------------------------------------------------------
+
+
+def _fiscal_year_for(company: str, date) -> str | None:
+	"""An enabled Fiscal Year covering `date` that applies to `company` (global or listed)."""
+	candidates = frappe.get_all(
+		"Fiscal Year",
+		filters={"disabled": 0, "year_start_date": ("<=", date), "year_end_date": (">=", date)},
+		pluck="name",
+	)
+	for name in candidates:
+		companies = frappe.get_all("Fiscal Year Company", filters={"parent": name}, pluck="company")
+		if not companies or company in companies:
+			return name
+	return None
+
+
+def _ensure_fiscal_year(company: str) -> None:
+	"""Make sure a fiscal year (1 Jan - 31 Dec) covering today exists for the company.
+
+	Created for this company only, so it cannot overlap with other companies' years.
+	"""
+	today = getdate(nowdate())
+	if _fiscal_year_for(company, today):
+		return
+	year = str(today.year)
+	if frappe.db.exists("Fiscal Year", year):
+		year = f"{today.year} ({frappe.get_cached_value('Company', company, 'abbr')})"
+	frappe.get_doc(
+		{
+			"doctype": "Fiscal Year",
+			"year": year,
+			"year_start_date": f"{today.year}-01-01",
+			"year_end_date": f"{today.year}-12-31",
+			"companies": [{"company": company}],
+		}
+	).insert(ignore_permissions=True)
+	frappe.cache().delete_key("fiscal_years")
 
 
 def _set_time_zone() -> None:

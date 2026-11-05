@@ -28,8 +28,8 @@ Account Number,Account Name,Arabic Name
 4000,Revenue,الإيرادات
 4100,Sales,المبيعات
 4190,Sales Returns and Discounts,مردودات ومسموحات المبيعات
-5000,Cost of Sales,تكلفة البضاعة المباعة
-5100,Cost of Goods Sold,تكلفة المبيعات
+5000,Cost of Sales,تكلفة المبيعات
+5100,Cost of Goods Sold,تكلفة البضاعة المباعة
 5200,Inventory Adjustments and Shrinkage,فروق جرد وتالف
 5300,Expenses Included In Valuation,مصروفات محملة على تكلفة المخزون
 6000,Operating Expenses,المصروفات التشغيلية
