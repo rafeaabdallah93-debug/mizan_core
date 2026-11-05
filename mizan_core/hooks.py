@@ -18,7 +18,7 @@ website_context = {
 	"splash_image": "/assets/mizan_core/images/logo.svg",
 }
 
-after_install = "mizan_core.branding.apply_branding"
-after_migrate = "mizan_core.branding.apply_branding"
+after_install = "mizan_core.install.after_install"
+after_migrate = "mizan_core.install.after_migrate"
 boot_session = "mizan_core.branding.rewrite_boot_apps"
 app_include_js = "/assets/mizan_core/js/branding.js"
